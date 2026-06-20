@@ -17,3 +17,4 @@ env/
 README.md
 *.md
 .DS_Store
+generated_presentations/
