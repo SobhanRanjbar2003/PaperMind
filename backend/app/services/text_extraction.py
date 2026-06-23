@@ -1,34 +1,40 @@
+"""Extract plain text from uploaded book files (PDF, DOCX, TXT, MD)."""
+
 import io
 
 from docx import Document
 from pypdf import PdfReader
 
+_SUPPORTED = {".pdf", ".docx", ".txt", ".md"}
+
 
 def extract_text(filename: str, content: bytes) -> str:
-    """متن خام را از فایل آپلودشده بر اساس پسوند آن استخراج می‌کند."""
-    name = filename.lower()
-
-    if name.endswith(".pdf"):
-        return _extract_pdf(content)
-    if name.endswith(".docx"):
-        return _extract_docx(content)
-    if name.endswith(".txt") or name.endswith(".md"):
+    """Return raw text from *content* based on *filename*'s extension."""
+    ext = _extension(filename)
+    if ext == ".pdf":
+        return _from_pdf(content)
+    if ext == ".docx":
+        return _from_docx(content)
+    if ext in {".txt", ".md"}:
         return content.decode("utf-8", errors="ignore")
-
     raise ValueError(
-        f"فرمت فایل پشتیبانی نمی‌شود: {filename}. فقط pdf, docx, txt, md مجاز است."
+        f"Unsupported file format: {filename!r}. Allowed: {', '.join(sorted(_SUPPORTED))}"
     )
 
 
-def _extract_pdf(content: bytes) -> str:
+def _extension(filename: str) -> str:
+    lower = filename.lower()
+    for ext in _SUPPORTED:
+        if lower.endswith(ext):
+            return ext
+    return ""
+
+
+def _from_pdf(content: bytes) -> str:
     reader = PdfReader(io.BytesIO(content))
-    pages_text = []
-    for page in reader.pages:
-        text = page.extract_text() or ""
-        pages_text.append(text)
-    return "\n".join(pages_text)
+    return "\n".join(page.extract_text() or "" for page in reader.pages)
 
 
-def _extract_docx(content: bytes) -> str:
+def _from_docx(content: bytes) -> str:
     doc = Document(io.BytesIO(content))
     return "\n".join(p.text for p in doc.paragraphs)

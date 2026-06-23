@@ -1,4 +1,3 @@
-# ===== Python =====
 __pycache__/
 *.pyc
 *.pyo
@@ -11,42 +10,34 @@ build/
 *.egg
 .eggs/
 
-# ===== Virtual Environment =====
 venv/
 .venv/
 env/
 ENV/
 
-# ===== Environment & Secrets =====
-# فایل .env اصلی هرگز commit نشود (شامل API Key)
+
 backend/.env
 .env
 .env.example
-# به جز نمونه‌ها که باید commit شوند
 .env.example
 backend/.env.example
 
-# ===== Docker =====
-# فایل‌های override محلی docker-compose که ممکن است credential داشته باشند
+
 docker-compose.override.yml
 
-# ===== Logs =====
 *.log
 logs/
 
-# ===== OS =====
 .DS_Store
 .DS_Store?
 Thumbs.db
 ehthumbs.db
 desktop.ini
 
-# ===== IDE =====
 .vscode/
 .idea/
 *.sublime-project
 *.sublime-workspace
 
-# ===== Uploaded files (در صورت ذخیره موقت روی سرور) =====
 uploads/
 tmp/

@@ -4,10 +4,21 @@ from typing import Optional
 from pydantic import BaseModel
 
 
+# ── Shared base ──────────────────────────────────────────────────────────────
+
+class _JobStatusBase(BaseModel):
+    job_id: str
+    status: str
+    progress: float
+    message: Optional[str] = None
+
+
+# ── Summarization ────────────────────────────────────────────────────────────
+
 class JobStatus(str, Enum):
     PENDING = "pending"
-    SUMMARIZING = "summarizing"  # مرحله map: خلاصه کردن chunk ها
-    REDUCING = "reducing"  # مرحله reduce: ادغام خلاصه ها
+    SUMMARIZING = "summarizing"
+    REDUCING = "reducing"
     DONE = "done"
     ERROR = "error"
 
@@ -22,7 +33,7 @@ class JobCreateResponse(BaseModel):
 class JobStatusResponse(BaseModel):
     job_id: str
     status: JobStatus
-    progress: float  # عددی بین 0 تا 1
+    progress: float
     message: Optional[str] = None
     chunk_count: int = 0
     chunks_done: int = 0
@@ -34,11 +45,12 @@ class JobResultResponse(BaseModel):
     word_count: int
 
 
+# ── Presentation ─────────────────────────────────────────────────────────────
+
 class PresentationStatus(str, Enum):
     PENDING = "pending"
-    PLANNING = "planning"  # طراحی ساختار اسلایدها با LLM
-    GENERATING_IMAGES = "generating_images"  # تولید تصاویر با مدل تصویرساز
-    BUILDING = "building"  # ساخت فایل pptx نهایی
+    PLANNING = "planning"
+    BUILDING = "building"
     DONE = "done"
     ERROR = "error"
 
@@ -46,6 +58,7 @@ class PresentationStatus(str, Enum):
 class PresentationStartResponse(BaseModel):
     job_id: str
     status: PresentationStatus
+    template: Optional[str] = None
 
 
 class PresentationStatusResponse(BaseModel):
@@ -54,27 +67,21 @@ class PresentationStatusResponse(BaseModel):
     progress: float
     message: Optional[str] = None
     slide_count: int = 0
-    images_total: int = 0
-    images_done: int = 0
+    template: Optional[str] = None
     download_url: Optional[str] = None
 
 
-# =========================================================
-# --- Mind Map ---
-# =========================================================
-
+# ── Mind Map ─────────────────────────────────────────────────────────────────
 
 class MindMapStatus(str, Enum):
     PENDING = "pending"
-    PLANNING = "planning"  # ساخت ساختار کلی (ریشه + شاخه‌های اصلی) از روی خلاصه
-    EXPANDING = "expanding"  # تعمیق هر شاخه با کمک متن خام chunk های مرتبط
+    PLANNING = "planning"
+    EXPANDING = "expanding"
     DONE = "done"
     ERROR = "error"
 
 
 class MindMapNode(BaseModel):
-    """یک نود درخت mind map. ساختار بازگشتی (هر نود می‌تواند children داشته باشد)."""
-
     id: str
     label: str
     depth: int
@@ -85,16 +92,12 @@ MindMapNode.model_rebuild()
 
 
 class MindMapEdge(BaseModel):
-    """یک یال، برای کتابخونه‌هایی مثل React Flow که نیاز به لیست مسطح nodes/edges دارند."""
-
     id: str
     source: str
     target: str
 
 
 class MindMapFlatNode(BaseModel):
-    """نمایش مسطح یک نود، سازگار با React Flow (بدون children تو در تو)."""
-
     id: str
     label: str
     depth: int
@@ -121,8 +124,106 @@ class MindMapResultResponse(BaseModel):
     title: str
     max_depth: int
     node_count: int
-    # درخت تو در تو (مناسب برای markmap و رندرهای سلسله‌مراتبی مستقیم)
     tree: MindMapNode
-    # نمایش مسطح nodes/edges (مناسب برای React Flow و کتابخونه‌های مشابه)
     nodes: list[MindMapFlatNode]
     edges: list[MindMapEdge]
+
+
+# ── Q&A shared ───────────────────────────────────────────────────────────────
+
+class QAStatus(str, Enum):
+    PENDING = "pending"
+    GENERATING = "generating"
+    DONE = "done"
+    ERROR = "error"
+
+
+class _QAStartResponse(BaseModel):
+    job_id: str
+    status: QAStatus
+    count: int
+
+
+class _QAStatusResponse(BaseModel):
+    job_id: str
+    status: QAStatus
+    progress: float
+    message: Optional[str] = None
+    count: int = 0
+
+
+# ── Multiple Choice ──────────────────────────────────────────────────────────
+
+class MCOption(BaseModel):
+    A: str
+    B: str
+    C: str
+    D: str
+
+
+class MCQuestion(BaseModel):
+    id: int
+    question: str
+    options: MCOption
+    answer: str
+    explanation: str
+
+
+class MCQStartResponse(_QAStartResponse):
+    pass
+
+
+class MCQStatusResponse(_QAStatusResponse):
+    pass
+
+
+class MCQResultResponse(BaseModel):
+    job_id: str
+    count: int
+    questions: list[MCQuestion]
+
+
+# ── Descriptive ──────────────────────────────────────────────────────────────
+
+class DescriptiveQuestion(BaseModel):
+    id: int
+    question: str
+    model_answer: str
+    key_points: list[str]
+
+
+class DescQStartResponse(_QAStartResponse):
+    pass
+
+
+class DescQStatusResponse(_QAStatusResponse):
+    pass
+
+
+class DescQResultResponse(BaseModel):
+    job_id: str
+    count: int
+    questions: list[DescriptiveQuestion]
+
+
+# ── Fill in the Blank ────────────────────────────────────────────────────────
+
+class FillBlankQuestion(BaseModel):
+    id: int
+    sentence: str
+    answer: str
+    hint: str
+
+
+class FillBlankStartResponse(_QAStartResponse):
+    pass
+
+
+class FillBlankStatusResponse(_QAStatusResponse):
+    pass
+
+
+class FillBlankResultResponse(BaseModel):
+    job_id: str
+    count: int
+    questions: list[FillBlankQuestion]

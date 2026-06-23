@@ -1,3 +1,8 @@
+"""
+Async LLM client with connection pooling, concurrency limits, and retry logic.
+Compatible with any OpenAI-compatible API (ArvanCloud, Together, etc.).
+"""
+
 import asyncio
 import logging
 import re
@@ -6,19 +11,16 @@ import httpx
 
 from app.config import settings
 
-# برخی مدل‌های reasoning (مثل DeepSeek-R1) قبل از پاسخ نهایی یک بلوک
-# <think>...</think> برمی‌گردانند که باید از خروجی نهایی حذف شود.
-_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+# Strip <think>...</think> blocks emitted by some reasoning models (e.g. DeepSeek-R1)
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
-logger = logging.getLogger("llm_client")
+logger = logging.getLogger(__name__)
 
-# یک Semaphore سراسری برای محدود کردن تعداد درخواست‌های هم‌زمان به API
-# (مهم برای جلوگیری از rate-limit شدن یا overload شدن سرور مدل)
 _semaphore = asyncio.Semaphore(settings.llm_max_concurrency)
-
-# یک httpx.AsyncClient مشترک با connection pooling برای کارایی بهتر
-# (به‌جای ساختن client جدید در هر request)
 _client: httpx.AsyncClient | None = None
+
+# HTTP status codes that are transient and safe to retry
+_RETRYABLE = {408, 409, 425, 429, 500, 502, 503, 504}
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -40,25 +42,26 @@ def _get_client() -> httpx.AsyncClient:
 
 
 async def aclose_client() -> None:
-    """برای بستن تمیز connection pool هنگام shutdown سرویس."""
+    """Gracefully close the shared connection pool on shutdown."""
     global _client
     if _client is not None:
         await _client.aclose()
         _client = None
 
 
-# خطاهایی که می‌توان برای آن‌ها retry کرد (مشکلات موقتی شبکه/سرور)
-_RETRYABLE_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
-
-
-async def generate(prompt: str, system: str | None = None, model: str | None = None) -> str:
+async def generate(
+    prompt: str,
+    system: str | None = None,
+    model: str | None = None,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+) -> str:
     """
-    یک درخواست chat completion (فرمت OpenAI-Compatible) به API مدل می‌فرستد
-    و متن پاسخ را برمی‌گرداند.
+    Send a chat-completion request and return the assistant text.
 
-    - تعداد درخواست‌های هم‌زمان با Semaphore محدود می‌شود (LLM_MAX_CONCURRENCY).
-    - در صورت خطای موقت (timeout / 429 / 5xx) با backoff نمایی تا
-      LLM_MAX_RETRIES بار تلاش مجدد می‌شود.
+    Concurrency is bounded by `llm_max_concurrency`. Transient errors
+    (timeout / 429 / 5xx) are retried with exponential backoff up to
+    `llm_max_retries` attempts.
     """
     messages = []
     if system:
@@ -68,8 +71,8 @@ async def generate(prompt: str, system: str | None = None, model: str | None = N
     payload = {
         "model": model or settings.llm_model,
         "messages": messages,
-        "max_tokens": settings.llm_max_tokens,
-        "temperature": settings.llm_temperature,
+        "max_tokens": max_tokens or settings.llm_max_tokens,
+        "temperature": temperature if temperature is not None else settings.llm_temperature,
     }
 
     client = _get_client()
@@ -80,68 +83,49 @@ async def generate(prompt: str, system: str | None = None, model: str | None = N
             try:
                 response = await client.post("/chat/completions", json=payload)
 
-                if response.status_code in _RETRYABLE_STATUS_CODES:
+                if response.status_code in _RETRYABLE:
                     raise httpx.HTTPStatusError(
-                        f"وضعیت قابل تلاش‌مجدد: {response.status_code}",
+                        f"retryable status {response.status_code}",
                         request=response.request,
                         response=response,
                     )
 
-                # خطاهای دیگر (مثل 401 نامعتبر بودن apikey، 400 درخواست بد، 404)
-                # قابل تلاش‌مجدد نیستند و باید فوراً بالا برده شوند.
                 response.raise_for_status()
-                data = response.json()
-                return _extract_content(data)
+                return _parse_content(response.json())
 
             except httpx.HTTPStatusError as exc:
-                if exc.response is not None and exc.response.status_code not in _RETRYABLE_STATUS_CODES:
-                    # خطای قطعی (auth، bad request و...)؛ تلاش مجدد فایده‌ای ندارد.
+                code = exc.response.status_code if exc.response is not None else None
+                if code is not None and code not in _RETRYABLE:
                     raise RuntimeError(
-                        f"درخواست به LLM API با خطای غیرقابل‌تلاش‌مجدد رد شد "
-                        f"({exc.response.status_code}): {exc.response.text[:300]}"
+                        f"LLM API non-retryable error ({code}): {exc.response.text[:300]}"
                     ) from exc
-
                 last_exc = exc
-                if attempt == settings.llm_max_retries:
-                    break
-                wait = settings.llm_retry_backoff_seconds * (2 ** (attempt - 1))
-                logger.warning(
-                    "درخواست به LLM API ناموفق بود (تلاش %s/%s): %s. تلاش مجدد بعد از %.1f ثانیه...",
-                    attempt,
-                    settings.llm_max_retries,
-                    exc,
-                    wait,
-                )
-                await asyncio.sleep(wait)
 
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_exc = exc
-                if attempt == settings.llm_max_retries:
-                    break
-                wait = settings.llm_retry_backoff_seconds * (2 ** (attempt - 1))
-                logger.warning(
-                    "درخواست به LLM API ناموفق بود (تلاش %s/%s): %s. تلاش مجدد بعد از %.1f ثانیه...",
-                    attempt,
-                    settings.llm_max_retries,
-                    exc,
-                    wait,
-                )
-                await asyncio.sleep(wait)
+
+            if attempt == settings.llm_max_retries:
+                break
+
+            wait = settings.llm_retry_backoff_seconds * (2 ** (attempt - 1))
+            logger.warning(
+                "LLM request failed (attempt %s/%s): %s – retrying in %.1fs",
+                attempt,
+                settings.llm_max_retries,
+                last_exc,
+                wait,
+            )
+            await asyncio.sleep(wait)
 
     raise RuntimeError(
-        f"درخواست به LLM API پس از {settings.llm_max_retries} تلاش ناموفق بود: {last_exc}"
+        f"LLM API failed after {settings.llm_max_retries} attempts: {last_exc}"
     ) from last_exc
 
 
-def _extract_content(data: dict) -> str:
-    """متن پاسخ را از ساختار استاندارد OpenAI chat completion استخراج می‌کند."""
+def _parse_content(data: dict) -> str:
+    """Extract and clean the assistant message text from an API response."""
     try:
-        choices = data.get("choices") or []
-        if not choices:
-            raise ValueError("پاسخ API هیچ choice ای نداشت.")
-        message = choices[0].get("message") or {}
-        content = message.get("content") or ""
-        content = _THINK_BLOCK_RE.sub("", content)
-        return content.strip()
-    except (KeyError, IndexError, ValueError, AttributeError) as exc:
-        raise RuntimeError(f"ساختار پاسخ API غیرمنتظره بود: {data}") from exc
+        content = data["choices"][0]["message"]["content"] or ""
+        return _THINK_RE.sub("", content).strip()
+    except (KeyError, IndexError) as exc:
+        raise RuntimeError(f"Unexpected API response structure: {data}") from exc
