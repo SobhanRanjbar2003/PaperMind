@@ -1,0 +1,17 @@
+node_modules
+.next
+out
+dist-electron
+release
+.env
+.env.local
+.env.*.local
+.git
+.gitignore
+*.log
+README.md
+Dockerfile
+.dockerignore
+.vscode
+.idea
+.DS_Store

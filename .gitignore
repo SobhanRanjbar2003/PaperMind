@@ -41,3 +41,17 @@ desktop.ini
 
 uploads/
 tmp/
+
+
+node_modules/
+.next/
+out/
+dist-electron/
+release/
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+coverage/
+next-env.d.ts

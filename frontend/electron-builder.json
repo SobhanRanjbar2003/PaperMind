@@ -1,0 +1,36 @@
+{
+  "appId": "com.PaperMind.app",
+  "productName": "PaperMind",
+  "directories": {
+    "output": "release",
+    "buildResources": "build"
+  },
+  "files": [
+    "dist-electron/**/*",
+    "out/**/*",
+    "public/**/*",
+    "package.json"
+  ],
+  "extraMetadata": {
+    "main": "dist-electron/main.js"
+  },
+  "mac": {
+    "category": "public.app-category.education",
+    "target": ["dmg", "zip"],
+    "hardenedRuntime": true,
+    "darkModeSupport": true
+  },
+  "win": {
+    "target": ["nsis"]
+  },
+  "linux": {
+    "category": "Education",
+    "target": ["AppImage", "deb"]
+  },
+  "protocols": [
+    {
+      "name": "PaperMind Deep Link",
+      "schemes": ["PaperMind"]
+    }
+  ]
+}
